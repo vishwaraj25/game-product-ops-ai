@@ -2,12 +2,18 @@
 __pycache__/
 *.pyc
 .venv/
+backend/.venv/
+.pytest_cache/
+.mypy_cache/
 
 # macOS
 .DS_Store
 
 # Node
 node_modules/
+.next/
+out/
+.pnpm-store/
 
 # Build
 dist/
@@ -15,6 +21,10 @@ build/
 
 # Environment
 .env
+.env.*
+!.env.example
+!frontend/.env.example
+!backend/.env.example
 
 # VS Code
 .vscode/

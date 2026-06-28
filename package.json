@@ -1,0 +1,11 @@
+{
+  "name": "game-product-ops-ai",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev:frontend": "pnpm --dir frontend dev",
+    "build:frontend": "pnpm --filter game-product-ops-ai-web build",
+    "lint:frontend": "pnpm --filter game-product-ops-ai-web lint"
+  }
+}
