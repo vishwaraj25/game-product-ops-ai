@@ -48,6 +48,14 @@ Health checks:
 - `http://localhost:8000/health`
 - `http://localhost:8000/health/db`
 
+Run database migrations and seed the synthetic LiveOps world:
+
+```bash
+cd backend
+alembic upgrade head
+python -m app.seed.project_eclipse
+```
+
 ## Start Frontend
 
 ```bash

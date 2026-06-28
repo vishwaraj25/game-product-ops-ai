@@ -16,3 +16,17 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - `GET /health`
 - `GET /health/db`
+
+## Database
+
+Run migrations:
+
+```bash
+alembic upgrade head
+```
+
+Seed the Project Eclipse simulation:
+
+```bash
+python -m app.seed.project_eclipse
+```

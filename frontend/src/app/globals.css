@@ -87,6 +87,75 @@ h1 {
   gap: 16px;
 }
 
+.run-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 20px;
+}
+
+.objective-form {
+  display: grid;
+  gap: 8px;
+}
+
+.objective-form label {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.objective-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.objective-row input {
+  min-width: 0;
+  height: 44px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--foreground);
+}
+
+.objective-row button,
+.suggestions button {
+  min-height: 36px;
+  border: 1px solid #b8c4d4;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--foreground);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.objective-row button {
+  min-width: 168px;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.objective-row button:disabled,
+.suggestions button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggestions button {
+  padding: 0 12px;
+}
+
 .panel {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
@@ -103,6 +172,85 @@ h1 {
   margin: 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.panel.wide {
+  display: grid;
+  gap: 8px;
+}
+
+.small {
+  font-size: 14px;
+}
+
+.error {
+  margin: 0;
+  color: #b42318;
+  font-weight: 700;
+}
+
+.results {
+  display: grid;
+  gap: 16px;
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+}
+
+.metric span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.metric strong {
+  font-size: 24px;
+}
+
+.two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.item {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 12px;
+}
+
+.item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.item h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.item span {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .badge {
@@ -136,5 +284,15 @@ h1 {
 
   .status-grid {
     grid-template-columns: 1fr;
+  }
+
+  .objective-row,
+  .two-column,
+  .metric-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .objective-row button {
+    width: 100%;
   }
 }
