@@ -6,8 +6,8 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.ai.service import AIReasoningService
 from app.investigations.models import Investigation, InvestigationPlan, InvestigationPlanStep
-from app.llm.base import StructuredLLM
 from app.planning.exceptions import PlannerOutputError
 from app.planning.schemas import StructuredInvestigationPlan
 
@@ -26,8 +26,8 @@ class PlannerResult:
 
 
 class InvestigationPlanner:
-    def __init__(self, llm: StructuredLLM) -> None:
-        self.llm = llm
+    def __init__(self, ai_reasoning: AIReasoningService) -> None:
+        self.ai_reasoning = ai_reasoning
 
     def plan_new_investigation(self, db: Session, request: PlannerRequest) -> PlannerResult:
         investigation = Investigation(
@@ -54,6 +54,7 @@ class InvestigationPlanner:
         investigation: Investigation,
     ) -> InvestigationPlan:
         structured_plan = self._generate_plan(investigation.objective)
+        trace = self.ai_reasoning.last_trace
         next_version = self._next_plan_version(db, investigation.id)
 
         plan = InvestigationPlan(
@@ -67,8 +68,8 @@ class InvestigationPlanner:
             success_criteria=list(structured_plan.success_criteria),
             status="planned",
             version=next_version,
-            created_model=self.llm.model_name,
-            created_model_version=self.llm.model_version,
+            created_model=trace.model_name if trace else None,
+            created_model_version=trace.model_version if trace else None,
         )
         db.add(plan)
         db.flush()
@@ -94,16 +95,13 @@ class InvestigationPlanner:
 
     def _generate_plan(self, objective: str) -> StructuredInvestigationPlan:
         try:
-            raw_plan = self.llm.generate_structured(
-                task="investigation_planning",
-                instructions=PLANNER_INSTRUCTIONS,
+            raw_plan = self.ai_reasoning.plan(
+                objective=objective,
                 input_payload={
-                    "objective": objective,
                     "available_sources": AVAILABLE_SOURCES,
                     "available_tools": AVAILABLE_TOOLS,
                     "planning_boundary": "Plan only. Do not execute tools, collect evidence, create findings, or recommend actions.",
                 },
-                output_schema=StructuredInvestigationPlan,
             )
             return StructuredInvestigationPlan.model_validate(raw_plan)
         except (PlannerOutputError, ValidationError, ValueError) as exc:

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         default="http://localhost:3000",
         alias="BACKEND_CORS_ORIGINS",
     )
+    ai_provider: str = Field(default="deterministic", alias="AI_PROVIDER")
 
     model_config = SettingsConfigDict(
         env_file=".env",

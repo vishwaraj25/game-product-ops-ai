@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.ai.exceptions import ProviderNotConfiguredError
 from app.ai.providers import BaseProvider, ClaudeProvider, DeterministicProvider, OpenAIProvider
 
 
@@ -19,4 +20,7 @@ class ProviderRouter:
 
     def get(self, provider_name: str | None = None) -> BaseProvider:
         selected = provider_name or self.default_provider
-        return self._providers[selected]
+        try:
+            return self._providers[selected]
+        except KeyError as exc:
+            raise ProviderNotConfiguredError(f"Unknown AI provider: {selected}") from exc

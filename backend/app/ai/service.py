@@ -8,8 +8,9 @@ from pydantic import BaseModel
 
 from app.ai.exceptions import AIReasoningError, StructuredOutputValidationError
 from app.ai.prompts import PromptManager
-from app.ai.providers import BaseProvider
+from app.ai.providers import BaseProvider, DeterministicProvider
 from app.ai.router import ProviderRouter
+from app.planning.schemas import StructuredInvestigationPlan
 
 StructuredResult = TypeVar("StructuredResult", bound=BaseModel)
 
@@ -37,8 +38,25 @@ class AIReasoningService:
     ) -> None:
         self.prompts = prompts or PromptManager()
         self.router = router or ProviderRouter()
-        self.fallback_provider = fallback_provider
+        self.fallback_provider = fallback_provider or DeterministicProvider()
         self.max_attempts = max(1, max_attempts)
+        self.last_trace: AIReasoningTrace | None = None
+
+    def plan(
+        self,
+        *,
+        objective: str,
+        input_payload: dict[str, Any],
+        provider_name: str | None = None,
+    ) -> StructuredInvestigationPlan:
+        payload = {"objective": objective, **input_payload}
+        return self.generate_structured(
+            task="investigation_planning",
+            prompt_name="investigation_planning",
+            input_payload=payload,
+            output_schema=StructuredInvestigationPlan,
+            provider_name=provider_name,
+        )
 
     def generate_structured(
         self,
@@ -50,7 +68,30 @@ class AIReasoningService:
         provider_name: str | None = None,
     ) -> StructuredResult:
         prompt = self.prompts.get(prompt_name)
-        provider = self.router.get(provider_name)
+        try:
+            provider = self.router.get(provider_name)
+        except AIReasoningError:
+            if not self.fallback_provider:
+                raise
+            fallback_trace = AIReasoningTrace(
+                task=task,
+                prompt_name=prompt.name,
+                prompt_version=prompt.version,
+                provider_name=self.fallback_provider.provider_name,
+                model_name=self.fallback_provider.model_name,
+                model_version=self.fallback_provider.model_version,
+            )
+            logger.warning("ai_reasoning.routing_fallback_started", extra={"trace": fallback_trace.__dict__})
+            result = self._attempt_provider(
+                provider=self.fallback_provider,
+                trace=fallback_trace,
+                instructions=prompt.instructions,
+                input_payload=input_payload,
+                output_schema=output_schema,
+            )
+            self.last_trace = fallback_trace
+            return result
+
         trace = AIReasoningTrace(
             task=task,
             prompt_name=prompt.name,
@@ -70,6 +111,7 @@ class AIReasoningService:
                 output_schema=output_schema,
             )
             logger.info("ai_reasoning.completed", extra={"trace": trace.__dict__})
+            self.last_trace = trace
             return result
         except AIReasoningError:
             if not self.fallback_provider:
@@ -93,6 +135,7 @@ class AIReasoningService:
                 output_schema=output_schema,
             )
             logger.info("ai_reasoning.fallback_completed", extra={"trace": fallback_trace.__dict__})
+            self.last_trace = fallback_trace
             return result
 
     def _attempt_provider(
