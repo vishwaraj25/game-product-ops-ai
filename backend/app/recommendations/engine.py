@@ -12,6 +12,7 @@ class RecommendationEngine:
         investigation_id: int,
         findings: list[Finding],
     ) -> list[Recommendation]:
+        self._validate_findings_are_persisted(findings)
         recommendations: list[Recommendation] = []
         for finding in findings:
             recommendation = Recommendation(
@@ -31,7 +32,24 @@ class RecommendationEngine:
             db.add(recommendation)
             recommendations.append(recommendation)
         db.flush()
+        self._validate_recommendations_reference_findings(recommendations, {finding.id for finding in findings})
         return recommendations
+
+    @staticmethod
+    def _validate_findings_are_persisted(findings: list[Finding]) -> None:
+        for finding in findings:
+            if finding.id is None:
+                raise ValueError("Recommendation cannot reference an unpersisted finding.")
+
+    @staticmethod
+    def _validate_recommendations_reference_findings(
+        recommendations: list[Recommendation],
+        finding_ids: set[int | None],
+    ) -> None:
+        persisted_finding_ids = {finding_id for finding_id in finding_ids if finding_id is not None}
+        for recommendation in recommendations:
+            if recommendation.finding_id not in persisted_finding_ids:
+                raise ValueError("Recommendation referenced a finding that does not exist.")
 
     @staticmethod
     def _title_for_finding(finding: Finding) -> str:

@@ -10,6 +10,7 @@ from app.ai.exceptions import AIReasoningError, StructuredOutputValidationError
 from app.ai.prompts import PromptManager
 from app.ai.providers import BaseProvider, DeterministicProvider
 from app.ai.router import ProviderRouter
+from app.ai.schemas import CorrelationOutput, ExecutiveBriefOutput, FindingGenerationOutput
 from app.planning.schemas import StructuredInvestigationPlan
 
 StructuredResult = TypeVar("StructuredResult", bound=BaseModel)
@@ -55,6 +56,48 @@ class AIReasoningService:
             prompt_name="investigation_planning",
             input_payload=payload,
             output_schema=StructuredInvestigationPlan,
+            provider_name=provider_name,
+        )
+
+    def correlate(
+        self,
+        *,
+        input_payload: dict[str, Any],
+        provider_name: str | None = None,
+    ) -> CorrelationOutput:
+        return self.generate_structured(
+            task="evidence_correlation",
+            prompt_name="evidence_correlation",
+            input_payload=input_payload,
+            output_schema=CorrelationOutput,
+            provider_name=provider_name,
+        )
+
+    def generate_findings(
+        self,
+        *,
+        input_payload: dict[str, Any],
+        provider_name: str | None = None,
+    ) -> FindingGenerationOutput:
+        return self.generate_structured(
+            task="finding_generation",
+            prompt_name="finding_generation",
+            input_payload=input_payload,
+            output_schema=FindingGenerationOutput,
+            provider_name=provider_name,
+        )
+
+    def generate_executive_brief(
+        self,
+        *,
+        input_payload: dict[str, Any],
+        provider_name: str | None = None,
+    ) -> ExecutiveBriefOutput:
+        return self.generate_structured(
+            task="executive_brief",
+            prompt_name="executive_brief",
+            input_payload=input_payload,
+            output_schema=ExecutiveBriefOutput,
             provider_name=provider_name,
         )
 

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.exceptions import AIReasoningError
+from app.ai.factory import build_ai_reasoning_service
 from app.investigations.models import Evidence, InvestigationPlan
 
 
@@ -27,6 +29,45 @@ class EvidenceCorrelator:
             .order_by(Evidence.source_type, Evidence.id)
         ).all()
 
+        try:
+            return self._ai_correlate(plan, evidence_items)
+        except (AIReasoningError, ValueError):
+            return self._deterministic_correlate(plan, evidence_items)
+
+    def _ai_correlate(
+        self,
+        plan: InvestigationPlan,
+        evidence_items: list[Evidence],
+    ) -> list[EvidenceCluster]:
+        evidence_payload = [self._evidence_payload(evidence) for evidence in evidence_items]
+        output = build_ai_reasoning_service().correlate(
+            input_payload={
+                "objective": plan.objective,
+                "objective_interpretation": plan.objective_interpretation,
+                "product_domain": plan.product_domain,
+                "evidence": evidence_payload,
+            }
+        )
+        persisted_evidence_ids = {evidence.id for evidence in evidence_items}
+        clusters = [
+            EvidenceCluster(
+                theme=cluster.theme,
+                summary=cluster.summary,
+                evidence_ids=list(cluster.evidence_ids),
+                source_types=list(cluster.source_types),
+                strength=cluster.strength,
+                confidence=cluster.confidence,
+            )
+            for cluster in output.clusters
+        ]
+        self._validate_clusters(clusters, persisted_evidence_ids)
+        return sorted(clusters, key=lambda cluster: (cluster.strength != "high", -cluster.confidence, cluster.theme))
+
+    def _deterministic_correlate(
+        self,
+        plan: InvestigationPlan,
+        evidence_items: list[Evidence],
+    ) -> list[EvidenceCluster]:
         grouped: dict[str, list[Evidence]] = defaultdict(list)
         for evidence in evidence_items:
             grouped[self._theme_for_evidence(plan.product_domain or "product_health", evidence)].append(evidence)
@@ -46,6 +87,34 @@ class EvidenceCorrelator:
                 )
             )
         return sorted(clusters, key=lambda cluster: (cluster.strength != "high", -cluster.confidence, cluster.theme))
+
+    @staticmethod
+    def _evidence_payload(evidence: Evidence) -> dict:
+        return {
+            "id": evidence.id,
+            "source_type": evidence.source_type,
+            "source_id": evidence.source_id,
+            "title": evidence.title,
+            "summary": evidence.summary,
+            "observed_value": evidence.observed_value,
+            "time_window": evidence.time_window,
+            "strength": evidence.strength,
+            "confidence": evidence.confidence,
+        }
+
+    @staticmethod
+    def _validate_clusters(
+        clusters: list[EvidenceCluster],
+        persisted_evidence_ids: set[int],
+    ) -> None:
+        if not clusters:
+            raise ValueError("Correlation produced no clusters.")
+        for cluster in clusters:
+            evidence_ids = set(cluster.evidence_ids)
+            if not evidence_ids:
+                raise ValueError("Correlation cluster has no evidence ids.")
+            if not evidence_ids.issubset(persisted_evidence_ids):
+                raise ValueError("Correlation referenced evidence that does not exist.")
 
     @staticmethod
     def _theme_for_evidence(product_domain: str, evidence: Evidence) -> str:
