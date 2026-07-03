@@ -1,6 +1,6 @@
 # Architecture
 
-Game Product Ops AI is organized around investigations, not messages.
+Product Ops AI is organized around investigations, not messages.
 
 The central product entity is `Investigation`: a durable record of a Product
 Manager's business objective and the autonomous product-ops work performed to

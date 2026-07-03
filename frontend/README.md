@@ -1,6 +1,6 @@
 # Frontend
 
-Next.js product console for Game Product Ops AI.
+Next.js product console for Product Ops AI.
 
 ## Development
 

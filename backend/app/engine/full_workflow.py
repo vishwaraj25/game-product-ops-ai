@@ -37,10 +37,17 @@ class FullInvestigationWorkflow:
             PlannerRequest(objective=objective, game_id=game_id, requested_by=requested_by),
         )
 
-        executor = InvestigationExecutionStateMachine(build_default_tool_registry())
-        executor.execute_plan(db, planner_result.plan.id)
+        return self.complete_existing_plan(db, planner_result.plan.id)
 
-        plan = db.get(InvestigationPlan, planner_result.plan.id)
+    def complete_existing_plan(
+        self,
+        db: Session,
+        plan_id: int,
+    ) -> FullInvestigationResult:
+        executor = InvestigationExecutionStateMachine(build_default_tool_registry())
+        executor.execute_plan(db, plan_id)
+
+        plan = db.get(InvestigationPlan, plan_id)
         if plan is None:
             raise RuntimeError("Investigation plan disappeared during execution.")
 

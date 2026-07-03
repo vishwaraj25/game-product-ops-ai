@@ -1,8 +1,8 @@
-# Game Product Ops AI
+# Product Ops AI
 
 ## Vision
 
-Game Product Ops AI is an autonomous AI Product Operations Agent built for Game Product Managers.
+Product Ops AI is an autonomous AI Product Operations Agent built for Game Product Managers.
 
 It automates the repetitive investigative work performed before product decisions are made.
 

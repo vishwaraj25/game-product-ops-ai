@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Game Product Ops AI",
+  title: "Product Ops AI",
   description: "Autonomous product operations foundation for game PMs.",
 };
 

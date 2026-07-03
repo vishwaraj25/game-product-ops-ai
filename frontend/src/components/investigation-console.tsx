@@ -1,300 +1,575 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { BackendHealth } from "@/components/backend-health";
 
-type InvestigationResult = {
+type InvestigationPhase = "idle" | "running" | "complete";
+type ApprovalDecision = "Awaiting PM approval" | "Approved" | "Rejected" | "Deeper investigation requested";
+
+type ToolRun = {
+  id: number;
+  plan_step_id: number | null;
+  tool_name: string;
+  status: string;
+  input_payload: Record<string, unknown>;
+  output_summary: Record<string, unknown> | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+type EvidenceItem = {
+  id: number;
+  tool_run_id: number | null;
+  source_type: string;
+  source_id: string | null;
+  title: string;
+  summary: string;
+  observed_value: Record<string, unknown> | null;
+  time_window: Record<string, unknown> | null;
+  strength: string;
+  confidence: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+type PlanStep = {
+  id: number;
+  step_order: number;
+  step_type: string;
+  intended_tool: string | null;
+  input_scope: Record<string, unknown>;
+  selection_rationale: string;
+  status: string;
+  tool_runs: ToolRun[];
+};
+
+type Finding = {
+  id: number;
+  title: string;
+  summary: string;
+  confidence: number;
+  severity: string;
+  evidence_count: number;
+  supporting_evidence_ids: number[];
+  supporting_evidence: EvidenceItem[];
+};
+
+type Recommendation = {
+  id: number;
+  finding_id: number | null;
+  title: string;
+  summary: string;
+  priority: string;
+  confidence: number;
+  risk_level: string;
+  requires_approval: boolean;
+  supporting_evidence_ids: number[];
+  supporting_evidence: EvidenceItem[];
+};
+
+type InvestigationStatus = {
   investigation_id: number;
   plan_id: number;
   status: string;
   objective: string;
   product_domain: string | null;
   counts: Record<string, number>;
-  findings: Array<{
-    title: string;
-    summary: string;
-    confidence: number;
-    severity: string;
-    evidence_count: number;
-  }>;
-  recommendations: Array<{
-    title: string;
-    summary: string;
-    priority: string;
-    confidence: number;
-    risk_level: string;
-    requires_approval: boolean;
-  }>;
+  plan_steps: PlanStep[];
+  tool_runs: ToolRun[];
+  evidence: EvidenceItem[];
+  findings: Finding[];
+  recommendations: Recommendation[];
   executive_brief: {
     summary: string;
     objective_interpretation: string;
     approval_required: boolean;
-  };
-};
-
-type ToolRunView = {
-  name: string;
-  source: string;
-  status: "completed" | "pending";
-};
-
-type EvidenceGroup = {
-  source: string;
-  label: string;
-  count: number;
-  emphasis: string;
+  } | null;
 };
 
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-const suggestedObjectives = [
+const exampleObjectives = [
   "Why are Ranked players leaving?",
   "Evaluate Patch 1.3",
-  "Analyze Android crash spike",
+  "Investigate declining Battle Pass revenue",
 ];
 
-const timelineStages = [
-  "Planning",
-  "Tool Selection",
-  "Evidence Collection",
-  "Correlation",
-  "Findings",
-  "Recommendations",
-  "Executive Brief",
-  "Awaiting Approval",
-];
-
-const toolsByDomain: Record<string, ToolRunView[]> = {
-  ranked_retention: [
-    { name: "readPatchNotes", source: "Patch Notes", status: "completed" },
-    { name: "getSessionAnalytics", source: "Session Analytics", status: "completed" },
-    { name: "getTelemetry", source: "Telemetry", status: "completed" },
-    { name: "searchReviews", source: "Reviews", status: "completed" },
-    { name: "getRevenueMetrics", source: "Revenue", status: "completed" },
-  ],
-  patch_evaluation: [
-    { name: "readPatchNotes", source: "Patch Notes", status: "completed" },
-    { name: "getSessionAnalytics", source: "Session Analytics", status: "completed" },
-    { name: "getTelemetry", source: "Telemetry", status: "completed" },
-    { name: "searchReviews", source: "Reviews", status: "completed" },
-    { name: "getCrashMetrics", source: "Crash Reports", status: "completed" },
-    { name: "getRevenueMetrics", source: "Revenue", status: "completed" },
-  ],
-  stability: [
-    { name: "readPatchNotes", source: "Patch Notes", status: "completed" },
-    { name: "getLiveOpsEvents", source: "LiveOps", status: "completed" },
-    { name: "getSessionAnalytics", source: "Session Analytics", status: "completed" },
-    { name: "searchReviews", source: "Reviews", status: "completed" },
-    { name: "getCrashMetrics", source: "Crash Reports", status: "completed" },
-  ],
-  monetization: [
-    { name: "readPatchNotes", source: "Patch Notes", status: "completed" },
-    { name: "getLiveOpsEvents", source: "LiveOps", status: "completed" },
-    { name: "getSessionAnalytics", source: "Session Analytics", status: "completed" },
-    { name: "getRevenueMetrics", source: "Revenue", status: "completed" },
-    { name: "getStorePurchases", source: "Store Purchases", status: "completed" },
-  ],
-};
-
-const defaultTools: ToolRunView[] = [
-  { name: "readPatchNotes", source: "Patch Notes", status: "completed" },
-  { name: "getSessionAnalytics", source: "Session Analytics", status: "completed" },
-  { name: "getTelemetry", source: "Telemetry", status: "completed" },
-  { name: "searchReviews", source: "Reviews", status: "completed" },
-];
+const terminalStatuses = new Set([
+  "awaiting_approval",
+  "execution_failed",
+  "planning_failed",
+]);
 
 export function InvestigationConsole() {
-  const [objective, setObjective] = useState(suggestedObjectives[0]);
-  const [result, setResult] = useState<InvestigationResult | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const [objective, setObjective] = useState("");
+  const [submittedObjective, setSubmittedObjective] = useState("");
+  const [phase, setPhase] = useState<InvestigationPhase>("idle");
+  const [investigationId, setInvestigationId] = useState<number | null>(null);
+  const [status, setStatus] = useState<InvestigationStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [approvalDecision, setApprovalDecision] =
+    useState<ApprovalDecision>("Awaiting PM approval");
 
-  async function runInvestigation(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (phase !== "running" || investigationId === null) {
+      return;
+    }
+
+    const activeInvestigationId = investigationId;
+    let isMounted = true;
+    let timer: number | undefined;
+
+    async function pollStatus() {
+      try {
+        const nextStatus = await fetchInvestigationStatus(activeInvestigationId);
+        if (!isMounted) {
+          return;
+        }
+
+        setStatus(nextStatus);
+        if (terminalStatuses.has(nextStatus.status)) {
+          setPhase("complete");
+          return;
+        }
+
+        timer = window.setTimeout(pollStatus, 500);
+      } catch (caught) {
+        if (!isMounted) {
+          return;
+        }
+        setError(caught instanceof Error ? caught.message : "Unable to refresh investigation");
+        timer = window.setTimeout(pollStatus, 1000);
+      }
+    }
+
+    pollStatus();
+
+    return () => {
+      isMounted = false;
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [investigationId, phase]);
+
+  async function startInvestigation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setIsRunning(true);
+    const trimmedObjective = objective.trim();
+    if (trimmedObjective.length < 8) {
+      return;
+    }
+
     setError(null);
+    setStatus(null);
+    setApprovalDecision("Awaiting PM approval");
+    setSubmittedObjective(trimmedObjective);
+    setPhase("running");
 
     try {
-      const response = await fetch(`${apiBaseUrl}/investigations/run`, {
+      const response = await fetch(`${apiBaseUrl}/investigations/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective, requested_by: "mvp-ui" }),
+        body: JSON.stringify({ objective: trimmedObjective, requested_by: "mvp-ui" }),
       });
 
       if (!response.ok) {
         throw new Error(`Backend returned ${response.status}`);
       }
 
-      setResult((await response.json()) as InvestigationResult);
+      const data = (await response.json()) as { investigation_id: number };
+      setInvestigationId(data.investigation_id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Investigation failed");
-    } finally {
-      setIsRunning(false);
+      setPhase("idle");
+      setError(caught instanceof Error ? caught.message : "Unable to start investigation");
     }
   }
 
-  return (
-    <main className="shell">
-      <div className="workspace">
-        <header className="header ops-header">
-          <div>
-            <p className="eyebrow">LiveOps Command Review</p>
-            <h1>Project Eclipse Operations Console</h1>
-            <p className="subtitle">
-              Run an autonomous product investigation and review the completed
-              pipeline as a decision packet for game PM approval.
-            </p>
-          </div>
-          <span className="badge">Approval Gate Active</span>
-        </header>
-
-        <section className="run-panel">
-          <form onSubmit={runInvestigation} className="objective-form">
-            <label htmlFor="objective">Investigation objective</label>
+  if (phase === "idle") {
+    return (
+      <main className="shell idle-shell">
+        <section className="idle-intake" aria-label="Start investigation">
+          <p className="eyebrow">Product Ops AI</p>
+          <h1>What should we investigate?</h1>
+          <form onSubmit={startInvestigation} className="objective-form">
+            <label htmlFor="objective">Investigation Objective</label>
             <div className="objective-row">
               <input
                 id="objective"
                 value={objective}
                 onChange={(event) => setObjective(event.target.value)}
                 minLength={8}
+                placeholder="Example: Why are Ranked players leaving?"
               />
-              <button type="submit" disabled={isRunning}>
-                {isRunning ? <span className="spinner-label">Running</span> : "Run Investigation"}
+              <button type="submit" disabled={objective.trim().length < 8}>
+                Start Investigation
               </button>
             </div>
           </form>
-          <div className="suggestions" aria-label="Suggested objectives">
-            {suggestedObjectives.map((item) => (
-              <button
-                type="button"
-                key={item}
-                onClick={() => setObjective(item)}
-                disabled={isRunning}
-              >
-                {item}
+          <div className="objective-chips" aria-label="Example objectives">
+            {exampleObjectives.map((example) => (
+              <button type="button" key={example} onClick={() => setObjective(example)}>
+                {example}
               </button>
             ))}
           </div>
           {error ? <p className="error">{error}</p> : null}
         </section>
+      </main>
+    );
+  }
 
-        <section className="status-grid" aria-label="System status">
-          <BackendHealth />
-          <StatusCard label="Investigation" value={result?.status ?? "Ready"} />
-          <StatusCard label="Domain" value={formatLabel(result?.product_domain ?? "Pending")} />
-        </section>
+  return (
+    <main className="shell">
+      <div className="workspace">
+        <ObjectiveHeader objective={submittedObjective} />
 
-        <InvestigationTimeline isRunning={isRunning} hasResult={Boolean(result)} />
+        {phase === "running" ? (
+          <RunningInvestigation status={status} />
+        ) : status ? (
+          <CompleteInvestigation
+            approvalDecision={approvalDecision}
+            setApprovalDecision={setApprovalDecision}
+            status={status}
+          />
+        ) : null}
 
-        {result ? <InvestigationResultView result={result} /> : <EmptyState />}
+        <SystemDetailsDrawer status={status} />
       </div>
     </main>
   );
 }
 
-function StatusCard({ label, value }: { label: string; value: string }) {
+function ObjectiveHeader({ objective }: { objective: string }) {
   return (
-    <div className="panel status-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <header className="collapsed-objective">
+      <div>
+        <p className="eyebrow">Product Ops AI</p>
+        <strong>{objective}</strong>
+      </div>
+      <span>Investigation packet</span>
+    </header>
+  );
+}
+
+function RunningInvestigation({ status }: { status: InvestigationStatus | null }) {
+  const steps = status?.plan_steps ?? [];
+  const activeStep = steps.find((step) => step.status === "running") ?? steps.find((step) => step.status === "planned") ?? null;
+  const completedSteps = steps.filter((step) => step.status === "completed");
+  const futureSteps = steps.filter((step) => step.status === "planned" && step.id !== activeStep?.id);
+
+  return (
+    <section className="running-stage" aria-label="Investigation in progress">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Workflow</p>
+          <h1>Investigation Timeline</h1>
+        </div>
+        <span className="live-pill active">Live backend state</span>
+      </div>
+
+      <div className="step-trail" aria-label="Completed steps">
+        {completedSteps.map((step) => (
+          <span className="completed-pill" key={step.id}>
+            <span aria-hidden="true">✓</span>
+            {stepLabel(step)}
+          </span>
+        ))}
+      </div>
+
+      <ActiveStepCard step={activeStep} status={status} />
+
+      {futureSteps.length > 0 ? (
+        <div className="future-steps" aria-label="Queued steps">
+          {futureSteps.map((step) => (
+            <span key={step.id}>{stepLabel(step)}</span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ActiveStepCard({
+  step,
+  status,
+}: {
+  step: PlanStep | null;
+  status: InvestigationStatus | null;
+}) {
+  if (!status) {
+    return (
+      <article className="active-step-card">
+        <span className="activity-status large" />
+        <div>
+          <h2>Planning investigation</h2>
+          <p>Creating the investigation plan and selecting source data.</p>
+        </div>
+      </article>
+    );
+  }
+
+  if (!step) {
+    return (
+      <article className="active-step-card">
+        <span className="activity-status large" />
+        <div>
+          <h2>Finalizing investigation packet</h2>
+          <p>{formatStatus(status.status)}</p>
+        </div>
+      </article>
+    );
+  }
+
+  const toolRun = step.tool_runs[step.tool_runs.length - 1];
+  return (
+    <article className="active-step-card">
+      <span className="activity-status large" />
+      <div>
+        <h2>{stepLabel(step)}</h2>
+        <p>{stepStatusDescription(step, toolRun)}</p>
+        <div className="active-step-meta">
+          <span>{formatStatus(step.status)}</span>
+          {step.intended_tool ? <span>{step.intended_tool}</span> : null}
+          <span>{formatScope(step.input_scope)}</span>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function CompleteInvestigation({
+  approvalDecision,
+  setApprovalDecision,
+  status,
+}: {
+  approvalDecision: ApprovalDecision;
+  setApprovalDecision: (decision: ApprovalDecision) => void;
+  status: InvestigationStatus;
+}) {
+  const completedSteps = status.plan_steps.filter((step) => step.status === "completed").length;
+  const totalSteps = status.plan_steps.length;
+
+  return (
+    <section className="complete-stage" aria-label="Completed investigation">
+      <div className="breadcrumb-strip">
+        <strong>
+          {completedSteps}/{totalSteps} steps complete
+        </strong>
+        <span>{formatStatus(status.status)}</span>
+      </div>
+
+      <EvidenceBoard evidence={status.evidence} toolRuns={status.tool_runs} />
+      <FindingsPanel findings={status.findings} />
+      <RecommendationsPanel recommendations={status.recommendations} />
+      <ExecutiveBrief status={status} />
+      <ApprovalPanel
+        approvalDecision={approvalDecision}
+        setApprovalDecision={setApprovalDecision}
+      />
+    </section>
+  );
+}
+
+function EvidenceBoard({
+  evidence,
+  toolRuns,
+}: {
+  evidence: EvidenceItem[];
+  toolRuns: ToolRun[];
+}) {
+  const toolRunById = useMemo(
+    () => new Map(toolRuns.map((toolRun) => [toolRun.id, toolRun])),
+    [toolRuns],
+  );
+  const grouped = useMemo(() => groupEvidenceBySource(evidence), [evidence]);
+
+  return (
+    <section className="panel deliverable-panel">
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">Evidence First</p>
+          <h2>Evidence Board</h2>
+        </div>
+        <span className="count-pill">{evidence.length} records</span>
+      </div>
+      <div className="evidence-columns">
+        {grouped.map(([source, items]) => (
+          <article className="evidence-group" key={source}>
+            <h3>{formatLabel(source)}</h3>
+            <div className="stack">
+              {items.map((item) => (
+                <EvidenceDisclosure
+                  evidence={item}
+                  key={item.id}
+                  toolRun={item.tool_run_id ? toolRunById.get(item.tool_run_id) : undefined}
+                />
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EvidenceDisclosure({
+  evidence,
+  toolRun,
+}: {
+  evidence: EvidenceItem;
+  toolRun?: ToolRun;
+}) {
+  return (
+    <details className="evidence-disclosure">
+      <summary>
+        <span>{evidence.title}</span>
+        <b>{confidenceLabel(evidence.confidence)}</b>
+      </summary>
+      <p>{evidence.summary}</p>
+      <dl>
+        <div>
+          <dt>Tool</dt>
+          <dd>{toolRun?.tool_name ?? "Unknown"}</dd>
+        </div>
+        <div>
+          <dt>Source ID</dt>
+          <dd>{evidence.source_id ?? "n/a"}</dd>
+        </div>
+        <div>
+          <dt>Raw output</dt>
+          <dd>
+            <pre>{JSON.stringify(rawEvidencePayload(evidence, toolRun), null, 2)}</pre>
+          </dd>
+        </div>
+      </dl>
+    </details>
+  );
+}
+
+function FindingsPanel({ findings }: { findings: Finding[] }) {
+  return (
+    <section className="panel deliverable-panel">
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">Claims</p>
+          <h2>Findings</h2>
+        </div>
+        <span className="count-pill">{findings.length}</span>
+      </div>
+      <div className="stack">
+        {findings.map((finding) => (
+          <ClaimCard
+            claim={finding.title}
+            confidence={finding.confidence}
+            evidence={finding.supporting_evidence}
+            key={finding.id}
+            meta={finding.severity}
+            summary={finding.summary}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecommendationsPanel({ recommendations }: { recommendations: Recommendation[] }) {
+  return (
+    <section className="panel deliverable-panel">
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">Actions</p>
+          <h2>Recommendations</h2>
+        </div>
+        <span className="count-pill">{recommendations.length}</span>
+      </div>
+      <div className="stack">
+        {recommendations.map((recommendation) => (
+          <ClaimCard
+            claim={recommendation.title}
+            confidence={recommendation.confidence}
+            evidence={recommendation.supporting_evidence}
+            key={recommendation.id}
+            meta={`${recommendation.priority} priority · ${recommendation.risk_level} risk`}
+            summary={recommendation.summary}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ClaimCard({
+  claim,
+  confidence,
+  evidence,
+  meta,
+  summary,
+}: {
+  claim: string;
+  confidence: number;
+  evidence: EvidenceItem[];
+  meta: string;
+  summary: string;
+}) {
+  return (
+    <article className="claim-card">
+      <div className="claim-card-header">
+        <div>
+          <span className="claim-meta">{meta}</span>
+          <h3>{claim}</h3>
+        </div>
+        <ConfidenceMeter confidence={confidence} />
+      </div>
+      <p>{summary}</p>
+      <div className="supporting-lines">
+        {evidence.map((item) => (
+          <details className="supporting-line" key={item.id}>
+            <summary>{item.title}</summary>
+            <p>{item.summary}</p>
+            <pre>{JSON.stringify(rawEvidencePayload(item), null, 2)}</pre>
+          </details>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function ConfidenceMeter({ confidence }: { confidence: number }) {
+  const percent = Math.round(confidence * 100);
+  return (
+    <div className="confidence-meter" aria-label={`${percent}% confidence`}>
+      <span>{percent}%</span>
+      <div>
+        <b style={{ width: `${percent}%` }} />
+      </div>
     </div>
   );
 }
 
-function InvestigationTimeline({
-  isRunning,
-  hasResult,
-}: {
-  isRunning: boolean;
-  hasResult: boolean;
-}) {
-  return (
-    <section className="timeline-panel" aria-label="Investigation timeline">
-      {timelineStages.map((stage, index) => {
-        const complete = hasResult;
-        const active = isRunning && index < 3;
-        return (
-          <div
-            className={`timeline-step ${complete ? "complete" : ""} ${active ? "active" : ""}`}
-            key={stage}
-          >
-            <span>{index + 1}</span>
-            <strong>{stage}</strong>
-          </div>
-        );
-      })}
-    </section>
-  );
-}
-
-function InvestigationResultView({ result }: { result: InvestigationResult }) {
-  const primaryFinding = result.findings[0];
-  const primaryRecommendation = result.recommendations[0];
-  const tools = useMemo(
-    () => toolsForResult(result).slice(0, result.counts.tool_runs ?? undefined),
-    [result],
-  );
-  const evidenceGroups = useMemo(() => evidenceForResult(result, tools), [result, tools]);
-
-  return (
-    <section className="results">
-      <ExecutiveSummaryCard
-        result={result}
-        primaryFinding={primaryFinding}
-        primaryRecommendation={primaryRecommendation}
-      />
-
-      <div className="ops-grid">
-        <ToolExecutionPanel tools={tools} />
-        <EvidenceBoard groups={evidenceGroups} total={result.counts.evidence ?? 0} />
-      </div>
-
-      <div className="two-column">
-        <SignalPanel title="Findings" items={result.findings} kind="finding" />
-        <SignalPanel title="Recommendations" items={result.recommendations} kind="recommendation" />
-      </div>
-    </section>
-  );
-}
-
-function ExecutiveSummaryCard({
-  result,
-  primaryFinding,
-  primaryRecommendation,
-}: {
-  result: InvestigationResult;
-  primaryFinding?: InvestigationResult["findings"][number];
-  primaryRecommendation?: InvestigationResult["recommendations"][number];
-}) {
+function ExecutiveBrief({ status }: { status: InvestigationStatus }) {
+  const brief = status.executive_brief;
   return (
     <section className="executive-card">
-      <div className="executive-card-header">
+      <div className="section-heading">
         <div>
           <p className="eyebrow">Executive Brief</p>
-          <h2>{result.objective}</h2>
+          <h2>{status.objective}</h2>
         </div>
-        <span className="approval-pill">
-          {result.executive_brief.approval_required ? "Awaiting Approval" : "Approved"}
+        <span className="approval-pill awaiting">
+          {brief?.approval_required ? "Approval required" : "Approval optional"}
         </span>
       </div>
-
-      <p className="brief-summary">{result.executive_brief.summary}</p>
-
+      <p className="brief-summary">{brief?.summary ?? "Executive brief is not available."}</p>
       <div className="brief-grid">
-        <BriefField label="Primary Finding" value={primaryFinding?.title ?? "No finding available"} />
         <BriefField
-          label="Confidence"
-          value={primaryFinding ? `${Math.round(primaryFinding.confidence * 100)}%` : "Pending"}
+          label="Objective"
+          value={brief?.objective_interpretation ?? status.objective}
         />
-        <BriefField
-          label="Supporting Evidence"
-          value={`${primaryFinding?.evidence_count ?? result.counts.evidence ?? 0} evidence items`}
-        />
-        <BriefField
-          label="Recommendation"
-          value={primaryRecommendation?.title ?? "No recommendation available"}
-        />
+        <BriefField label="Domain" value={formatLabel(status.product_domain ?? "Pending")} />
+        <BriefField label="Evidence" value={`${status.evidence.length} traceable records`} />
       </div>
     </section>
   );
@@ -309,131 +584,139 @@ function BriefField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ToolExecutionPanel({ tools }: { tools: ToolRunView[] }) {
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <h2>Tool Execution</h2>
-        <span>{tools.length} completed</span>
-      </div>
-      <div className="tool-list">
-        {tools.map((tool) => (
-          <article className="tool-row" key={tool.name}>
-            <div>
-              <strong>{tool.name}</strong>
-              <span>{tool.source}</span>
-            </div>
-            <em>{tool.status}</em>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function EvidenceBoard({ groups, total }: { groups: EvidenceGroup[]; total: number }) {
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <h2>Evidence Board</h2>
-        <span>{total} items</span>
-      </div>
-      <div className="evidence-board">
-        {groups.map((group) => (
-          <article className="evidence-source" key={group.source}>
-            <div>
-              <strong>{group.label}</strong>
-              <span>{group.emphasis}</span>
-            </div>
-            <b>{group.count}</b>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function SignalPanel({
-  title,
-  items,
-  kind,
+function ApprovalPanel({
+  approvalDecision,
+  setApprovalDecision,
 }: {
-  title: string;
-  items: InvestigationResult["findings"] | InvestigationResult["recommendations"];
-  kind: "finding" | "recommendation";
+  approvalDecision: ApprovalDecision;
+  setApprovalDecision: (decision: ApprovalDecision) => void;
 }) {
   return (
-    <div className="panel">
-      <div className="panel-heading">
-        <h2>{title}</h2>
-        <span>{items.length}</span>
+    <section className="approval-panel">
+      <div>
+        <p className="eyebrow">Decision Gate</p>
+        <h2>Approval Actions</h2>
       </div>
-      <div className="stack">
-        {items.map((item) => (
-          <article key={item.title} className="item">
-            <h3>{item.title}</h3>
-            <p>{item.summary}</p>
-            <span>
-              {kind === "finding"
-                ? `${Math.round(("confidence" in item ? item.confidence : 0) * 100)}% confidence`
-                : `${"priority" in item ? item.priority : "medium"} priority`}
-            </span>
-          </article>
-        ))}
+      <div className="approval-actions" aria-label="Approval actions">
+        <button
+          className={approvalDecision === "Approved" ? "selected approve" : "approve"}
+          type="button"
+          onClick={() => setApprovalDecision("Approved")}
+        >
+          Approve
+        </button>
+        <button
+          className={approvalDecision === "Rejected" ? "selected reject" : "reject"}
+          type="button"
+          onClick={() => setApprovalDecision("Rejected")}
+        >
+          Reject
+        </button>
+        <button
+          className={approvalDecision === "Deeper investigation requested" ? "selected request" : "request"}
+          type="button"
+          onClick={() => setApprovalDecision("Deeper investigation requested")}
+        >
+          Request Deeper Investigation
+        </button>
       </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <section className="empty-state">
-      <strong>Ready for investigation</strong>
-      <p>
-        The console will populate with a completed pipeline, tool execution,
-        evidence board, findings, recommendations, and executive brief.
-      </p>
     </section>
   );
 }
 
-function toolsForResult(result: InvestigationResult): ToolRunView[] {
-  return toolsByDomain[result.product_domain ?? ""] ?? defaultTools;
+function SystemDetailsDrawer({ status }: { status: InvestigationStatus | null }) {
+  return (
+    <details className="system-drawer">
+      <summary>System details</summary>
+      <div className="system-grid">
+        <BackendHealth />
+        <div className="panel status-card tone-blue">
+          <span>Investigation</span>
+          <strong>{status?.status ? formatStatus(status.status) : "Waiting"}</strong>
+        </div>
+        <div className="panel status-card tone-amber">
+          <span>Domain</span>
+          <strong>{formatLabel(status?.product_domain ?? "Pending")}</strong>
+        </div>
+      </div>
+    </details>
+  );
 }
 
-function evidenceForResult(result: InvestigationResult, tools: ToolRunView[]): EvidenceGroup[] {
-  const total = result.counts.evidence ?? 0;
-  const base = tools.map((tool) => ({
-    source: tool.source,
-    label: tool.source,
-    count: 0,
-    emphasis: evidenceEmphasis(tool.source),
-  }));
-  if (!base.length) {
-    return [];
-  }
-
-  const even = Math.floor(total / base.length);
-  let remainder = total % base.length;
-  return base.map((group) => {
-    const count = even + (remainder > 0 ? 1 : 0);
-    remainder -= 1;
-    return { ...group, count };
+async function fetchInvestigationStatus(investigationId: number) {
+  const response = await fetch(`${apiBaseUrl}/investigations/${investigationId}/status`, {
+    cache: "no-store",
   });
+  if (!response.ok) {
+    throw new Error(`Backend returned ${response.status}`);
+  }
+  return (await response.json()) as InvestigationStatus;
 }
 
-function evidenceEmphasis(source: string) {
-  const emphasis: Record<string, string> = {
-    Telemetry: "metric movement",
-    Reviews: "player sentiment",
-    "Patch Notes": "release context",
-    Revenue: "payer health",
-    "Session Analytics": "retention and queues",
-    "Crash Reports": "stability signal",
-    LiveOps: "event timing",
-    "Store Purchases": "purchase mix",
+function groupEvidenceBySource(evidence: EvidenceItem[]) {
+  const grouped = new Map<string, EvidenceItem[]>();
+  for (const item of evidence) {
+    const source = item.source_type || "unknown";
+    grouped.set(source, [...(grouped.get(source) ?? []), item]);
+  }
+  return Array.from(grouped.entries());
+}
+
+function stepLabel(step: PlanStep) {
+  return step.intended_tool ?? formatLabel(step.step_type);
+}
+
+function stepStatusDescription(step: PlanStep, toolRun?: ToolRun) {
+  if (toolRun?.status === "running") {
+    return `${toolRun.tool_name} is querying ${formatLabel(step.step_type)} with ${formatScope(step.input_scope)}.`;
+  }
+  if (step.status === "planned") {
+    return `Queued to use ${step.intended_tool ?? "selected source"} for ${formatScope(step.input_scope)}.`;
+  }
+  if (toolRun?.status === "failed") {
+    return toolRun.error_message ?? "Tool execution failed.";
+  }
+  return step.selection_rationale;
+}
+
+function formatScope(scope: Record<string, unknown>) {
+  const days = scope.lookback_days ?? scope.window_days;
+  const segment = scope.segment ?? scope.mode ?? scope.platform;
+  if (days && segment) {
+    return `${String(days)}d window · ${String(segment)}`;
+  }
+  if (days) {
+    return `${String(days)}d window`;
+  }
+  if (segment) {
+    return String(segment);
+  }
+  return "selected scope";
+}
+
+function rawEvidencePayload(evidence: EvidenceItem, toolRun?: ToolRun) {
+  return {
+    evidence: {
+      id: evidence.id,
+      source_type: evidence.source_type,
+      source_id: evidence.source_id,
+      observed_value: evidence.observed_value,
+      time_window: evidence.time_window,
+      metadata: evidence.metadata,
+    },
+    tool_output_summary: toolRun?.output_summary,
   };
-  return emphasis[source] ?? "source signal";
+}
+
+function confidenceLabel(confidence: number | null) {
+  if (confidence === null) {
+    return "n/a";
+  }
+  return `${Math.round(confidence * 100)}%`;
+}
+
+function formatStatus(value: string) {
+  return formatLabel(value);
 }
 
 function formatLabel(value: string) {

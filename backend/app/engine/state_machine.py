@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,16 +46,18 @@ class InvestigationExecutionStateMachine:
 
         plan.status = "executing"
         investigation.status = "collecting_evidence"
-        db.flush()
+        db.commit()
 
         tool_runs_created = 0
         evidence_created = 0
         failed = False
 
         for step in executable_steps:
+            step.status = "running"
             tool_run = self._create_tool_run(investigation.id, step)
             db.add(tool_run)
-            db.flush()
+            db.commit()
+            time.sleep(0.8)
             tool_runs_created += 1
 
             try:
@@ -68,12 +71,14 @@ class InvestigationExecutionStateMachine:
                 for candidate in result.evidence:
                     db.add(self._create_evidence(investigation.id, tool_run.id, candidate))
                     evidence_created += 1
+                db.commit()
             except UnknownToolError as exc:
                 failed = True
                 tool_run.status = "failed"
                 tool_run.error_message = str(exc)
                 tool_run.completed_at = datetime.utcnow()
                 step.status = "failed"
+                db.commit()
                 break
             except Exception as exc:
                 failed = True
@@ -81,6 +86,7 @@ class InvestigationExecutionStateMachine:
                 tool_run.error_message = f"{type(exc).__name__}: {exc}"
                 tool_run.completed_at = datetime.utcnow()
                 step.status = "failed"
+                db.commit()
                 break
 
         if failed:

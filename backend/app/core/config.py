@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Game Product Ops AI API"
+    app_name: str = "Product Ops AI API"
     app_version: str = "0.1.0"
     database_url: str = Field(
         default="postgresql+psycopg://game_ops:game_ops_password@localhost:5432/game_product_ops",

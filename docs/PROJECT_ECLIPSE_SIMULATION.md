@@ -1,7 +1,7 @@
 # Project Eclipse Simulation
 
 Project Eclipse is a fictional live-service multiplayer game used as the MVP
-data world for Game Product Ops AI.
+data world for Product Ops AI.
 
 ## Game Concept
 
